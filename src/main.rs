@@ -36,21 +36,25 @@
 
 use std::io;
 
+use clap::Parser;
 use csv::ReaderBuilder;
 use petgraph::data::Build;
 use serde::Deserialize;
+use std::path::PathBuf;
 
 const ALPHA_LENGTH: usize = (b'Z' - b'A') as usize + 1 + 3;
 const AA_DELETE: usize = ALPHA_LENGTH - 3;
 const AA_STOP: usize = ALPHA_LENGTH - 2;
 const AA_ELSE: usize = ALPHA_LENGTH - 1;
 
-fn read_records(amino_acid_sequence: &mut Vec<Vec<u8>>) {
+fn read_records(amino_acid_sequence: &mut Vec<Vec<u8>>, has_header: bool) {
     let mut rdr = ReaderBuilder::new()
         .delimiter(b'\t')
         .from_reader(io::stdin());
 
-    let _ = rdr.headers().expect("Input file is missing headers!\n");
+    if has_header {
+        let _ = rdr.headers().expect("Input file is missing headers!\n");
+    }
 
     for result in rdr.deserialize() {
         let record: Result<Record, _> = result;
@@ -73,18 +77,56 @@ struct Record {
     cds_aln: String,
 }
 
-fn main() {
-    let mut sequences: Vec<Vec<u8>> = vec![];
-    read_records(&mut sequences);
+#[derive(Parser)]
+#[clap(author = "Samuel S. Shepard, Centers for Disease Control and Prevention (vfn4@cdc.gov)")]
+#[clap(version = "0.1")]
+#[clap(
+    about = "Highly experimental tool to create a mutation co-occurrence graph for viewing in tools like GEPHI. Ulimate goal is to find convergently evolved shared mutations."
+)]
+#[clap(long_about = None)]
+struct Cli {
+    #[clap(long, short, value_parser, value_name = "Reference File")]
+    reference_file: PathBuf,
+    #[clap(
+        default_value_t = 4,
+        long,
+        short = 's',
+        value_parser,
+        value_name = "minimum co-ocurrence support"
+    )]
+    minimum_coocurrence_support: u32,
+    #[clap(
+        default_value_t = 0.10,
+        long,
+        short = 'f',
+        value_parser,
+        value_name = "minimum co-occrrence frequency"
+    )]
+    minimum_cooccrrence_frequency: f32,
+    #[clap(
+        default_value_t = 0.97,
+        long,
+        short,
+        value_parser,
+        value_name = "conservation threshold"
+    )]
+    conservation_threshold: f32,
+    #[clap(short, long, short, action)]
+    query_has_header: bool,
+}
 
-    // TO-DO improve input and args to be user-friendly
+fn main() {
+    let args = Cli::parse();
 
     // MT019531 / WUHAN
-    let ref_sequence= b"MFVFLVLLPLVSSQCVNLTTRTQLPPAYTNSFTRGVYYPDKVFRSSVLHSTQDLFLPFFSNVTWFHAIHVSGTNGTKRFDNPVLPFNDGVYFASTEKSNIIRGWIFGTTLDSKTQSLLIVNNATNVVIKVCEFQFCNDPFLGVYYHKNNKSWMESEFRVYSSANNCTFEYVSQPFLMDLEGKQGNFKNLREFVFKNIDGYFKIYSKHTPINLVRDLPQGFSALEPLVDLPIGINITRFQTLLALHRSYLTPGDSSSGWTAGAAAYYVGYLQPRTFLLKYNENGTITDAVDCALDPLSETKCTLKSFTVEKGIYQTSNFRVQPTESIVRFPNITNLCPFGEVFNATRFASVYAWNRKRISNCVADYSVLYNSASFSTFKCYGVSPTKLNDLCFTNVYADSFVIRGDEVRQIAPGQTGKIADYNYKLPDDFTGCVIAWNSNNLDSKVGGNYNYLYRLFRKSNLKPFERDISTEIYQAGSTPCNGVEGFNCYFPLQSYGFQPTNGVGYQPYRVVVLSFELLHAPATVCGPKKSTNLVKNKCVNFNFNGLTGTGVLTESNKKFLPFQQFGRDIADTTDAVRDPQTLEILDITPCSFGGVSVITPGTNTSNQVAVLYQDVNCTEVPVAIHADQLTPTWRVYSTGSNVFQTRAGCLIGAEHVNNSYECDIPIGAGICASYQTQTNSPRRARSVASQSIIAYTMSLGAENSVAYSNNSIAIPTNFTISVTTEILPVSMTKTSVDCTMYICGDSTECSNLLLQYGSFCTQLNRALTGIAVEQDKNTQEVFAQVKQIYKTPPIKDFGGFNFSQILPDPSKPSKRSFIEDLLFNKVTLADAGFIKQYGDCLGDIAARDLICAQKFNGLTVLPPLLTDEMIAQYTSALLAGTITSGWTFGAGAALQIPFAMQMAYRFNGIGVTQNVLYENQKLIANQFNSAIGKIQDSLSSTASALGKLQDVVNQNAQALNTLVKQLSSNFGAISSVLNDILSRLDKVEAEVQIDRLITGRLQSLQTYVTQQLIRAAEIRASANLAATKMSECVLGQSKRVDFCGKGYHLMSFPQSAPHGVVFLHVTYVPAQEKNFTTAPAICHDGKAHFPREGVFVSNGTHWFVTQRNFYEPQIITTDNTFVSGNCDVVIGIVNNTVYDPLQPELDSFKEELDKYFKNHTSPDVDLGDISGINASVVNIQKEIDRLNEVAKNLNESLIDLQELGKYEQYIKWPWYIWLGFIAGLIAIVMVTIMLCCMTSCCSCLKGCCSCGSCCKFDEDDSEPVLKGVKLHYT*";
-    let minimum_coocurrence_support = 4;
-    let minimum_cooccrrence_frequency: f32 = 0.10;
-    let conservation_threshold: f32 = 0.97;
-    //  let output_prefix = "./graph";
+    let ref_sequence = std::fs::read_to_string(args.reference_file).expect("Bad reference file");
+    let ref_sequence = ref_sequence.as_bytes();
+    let minimum_coocurrence_support = args.minimum_coocurrence_support;
+    let minimum_cooccrrence_frequency: f32 = args.minimum_cooccrrence_frequency;
+    let conservation_threshold: f32 = args.conservation_threshold;
+
+    let mut sequences: Vec<Vec<u8>> = vec![];
+    read_records(&mut sequences, args.query_has_header);
 
     // Maximum length of sequences, should be uniform but this is required to avoid issues
     let seq_len = sequences
@@ -204,6 +246,15 @@ fn main() {
     let dot = format!("{:?}", Dot::new(&aa_mut_net));
     let dot = re.replace_all(&dot, "$0, weight=$1");
     println!("{dot}");
+
+    /*
+        let dot = re.replace_all(&dot, |caps: &Captures| {
+        format!(
+            "{}, weight={}",
+            &caps[0],
+            caps[1].parse::<f32>().unwrap_or_default() / number_sequences as f32
+        )
+    }); */
 }
 
 #[derive(Copy, Clone, PartialEq, PartialOrd, Ord, Eq, Hash)]

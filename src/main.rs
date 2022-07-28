@@ -1,6 +1,7 @@
 // Filename:         convergraph
-// Description:      Highly experimental tool to create a mutation convergance
-//                   graph for viewing in tools like GEPHI.
+// Description:      Highly experimental tool to create a mutation co-occurrence
+//                   graph for viewing in tools like GEPHI. Ulimate goal is to
+//                   find convergently evolved shared mutations.
 //
 // Date dedicated:   2022-07-27
 // Author:           Samuel S. Shepard, Centers for Disease Control and Prevention
@@ -33,14 +34,10 @@
 //  Please provide appropriate attribution in any work or product based on this
 //  material.
 
-#![allow(dead_code)]
-//use std::error::Error;
 use std::io;
-//use std::process;
 
 use csv::ReaderBuilder;
-use petgraph::{data::Build, dot::Config};
-//use petgraph::graph::Node;
+use petgraph::data::Build;
 use serde::Deserialize;
 
 const ALPHA_LENGTH: usize = (b'Z' - b'A') as usize + 1 + 3;
@@ -64,7 +61,8 @@ fn read_records(amino_acid_sequence: &mut Vec<Vec<u8>>) {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
+#[allow(dead_code)]
 struct Record {
     cds_id: String,
     accession: String,
@@ -80,10 +78,12 @@ fn main() {
     read_records(&mut sequences);
 
     // TO-DO improve input and args to be user-friendly
-    static CONSERVATION_THRESHOLD: f32 = 0.97;
+
     // MT019531 / WUHAN
     let ref_sequence= b"MFVFLVLLPLVSSQCVNLTTRTQLPPAYTNSFTRGVYYPDKVFRSSVLHSTQDLFLPFFSNVTWFHAIHVSGTNGTKRFDNPVLPFNDGVYFASTEKSNIIRGWIFGTTLDSKTQSLLIVNNATNVVIKVCEFQFCNDPFLGVYYHKNNKSWMESEFRVYSSANNCTFEYVSQPFLMDLEGKQGNFKNLREFVFKNIDGYFKIYSKHTPINLVRDLPQGFSALEPLVDLPIGINITRFQTLLALHRSYLTPGDSSSGWTAGAAAYYVGYLQPRTFLLKYNENGTITDAVDCALDPLSETKCTLKSFTVEKGIYQTSNFRVQPTESIVRFPNITNLCPFGEVFNATRFASVYAWNRKRISNCVADYSVLYNSASFSTFKCYGVSPTKLNDLCFTNVYADSFVIRGDEVRQIAPGQTGKIADYNYKLPDDFTGCVIAWNSNNLDSKVGGNYNYLYRLFRKSNLKPFERDISTEIYQAGSTPCNGVEGFNCYFPLQSYGFQPTNGVGYQPYRVVVLSFELLHAPATVCGPKKSTNLVKNKCVNFNFNGLTGTGVLTESNKKFLPFQQFGRDIADTTDAVRDPQTLEILDITPCSFGGVSVITPGTNTSNQVAVLYQDVNCTEVPVAIHADQLTPTWRVYSTGSNVFQTRAGCLIGAEHVNNSYECDIPIGAGICASYQTQTNSPRRARSVASQSIIAYTMSLGAENSVAYSNNSIAIPTNFTISVTTEILPVSMTKTSVDCTMYICGDSTECSNLLLQYGSFCTQLNRALTGIAVEQDKNTQEVFAQVKQIYKTPPIKDFGGFNFSQILPDPSKPSKRSFIEDLLFNKVTLADAGFIKQYGDCLGDIAARDLICAQKFNGLTVLPPLLTDEMIAQYTSALLAGTITSGWTFGAGAALQIPFAMQMAYRFNGIGVTQNVLYENQKLIANQFNSAIGKIQDSLSSTASALGKLQDVVNQNAQALNTLVKQLSSNFGAISSVLNDILSRLDKVEAEVQIDRLITGRLQSLQTYVTQQLIRAAEIRASANLAATKMSECVLGQSKRVDFCGKGYHLMSFPQSAPHGVVFLHVTYVPAQEKNFTTAPAICHDGKAHFPREGVFVSNGTHWFVTQRNFYEPQIITTDNTFVSGNCDVVIGIVNNTVYDPLQPELDSFKEELDKYFKNHTSPDVDLGDISGINASVVNIQKEIDRLNEVAKNLNESLIDLQELGKYEQYIKWPWYIWLGFIAGLIAIVMVTIMLCCMTSCCSCLKGCCSCGSCCKFDEDDSEPVLKGVKLHYT*";
-    let minimum_coocurrence = 4;
+    let minimum_coocurrence_support = 4;
+    let minimum_cooccrrence_frequency: f32 = 0.10;
+    let conservation_threshold: f32 = 0.97;
     //  let output_prefix = "./graph";
 
     // Maximum length of sequences, should be uniform but this is required to avoid issues
@@ -130,7 +130,7 @@ fn main() {
             let aa = index_to_aa(index);
 
             let freq: f32 = counts[i][index] as f32 / sum as f32;
-            if freq < CONSERVATION_THRESHOLD {
+            if freq < conservation_threshold {
                 valid_positions.push(i);
                 let p = i + 1;
                 eprintln!("{p:0>4} / {aa}: {freq:.4} ({sum})");
@@ -169,12 +169,10 @@ fn main() {
                     aa_mut_net.add_edge(*a, *b, 1_u32);
                 }
             });
-
-        //panic! {"Done"};
     }
 
+    // remove nodes with lack of support or frequency
     let nodes: Vec<NodeSub> = aa_mut_net.nodes().collect();
-    // remove nodes with transient edge weights
     for node in nodes.iter() {
         let edges: Vec<(NodeSub, NodeSub, u32)> = aa_mut_net
             .edges(*node)
@@ -182,12 +180,12 @@ fn main() {
             .collect();
 
         for (a, b, w) in edges {
-            if w < minimum_coocurrence {
+            let f = w as f32 / number_sequences as f32;
+            if w < minimum_coocurrence_support || f < minimum_cooccrrence_frequency {
                 aa_mut_net.remove_edge(a, b);
             }
         }
     }
-    // TO-DO do co-occurrence pruning based on normalized max weights
 
     // remove unconnected nodes
     for node in nodes.iter() {
@@ -199,11 +197,13 @@ fn main() {
 
     // print results
     use petgraph::dot::Dot;
-    //println!("{:?}", Dot::new(&aa_mut_net));
-    println!(
-        "{:?}",
-        Dot::with_config(&aa_mut_net, &[Config::EdgeNoLabel])
-    );
+    use regex::Regex;
+
+    // hack output: TO-DO, improve
+    let re = Regex::new(r#"--\s*\d+\s*\[\s*label\s*=\s*"(\d+)""#).unwrap();
+    let dot = format!("{:?}", Dot::new(&aa_mut_net));
+    let dot = re.replace_all(&dot, "$0, weight=$1");
+    println!("{dot}");
 }
 
 #[derive(Copy, Clone, PartialEq, PartialOrd, Ord, Eq, Hash)]
@@ -219,7 +219,7 @@ impl std::fmt::Debug for NodeSub {
             f,
             "{}{}{}",
             self.ancestral as char,
-            self.index.to_string(),
+            (self.index + 1).to_string(),
             self.derived as char
         )
     }
@@ -231,7 +231,7 @@ impl std::fmt::Display for NodeSub {
             f,
             "{}{}{}",
             self.ancestral as char,
-            self.index.to_string(),
+            (self.index + 1).to_string(),
             self.derived as char
         )
     }
@@ -255,7 +255,3 @@ fn index_to_aa(index: usize) -> char {
         _ => (index as u8 + b'A') as char,
     }
 }
-
-// AA_DELETEs matters later on
-// page 6 on supplemental is convergent amino acid mutations
-// need wuhan

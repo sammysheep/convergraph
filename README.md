@@ -1,4 +1,5 @@
 # CONVERGRAPH
+Highly experimental tool to create a mutation co-occurrence graph for viewing in tools like GEPHI. Ulimate goal is to find convergently evolved shared mutations.
 
 ## Build the code
 
@@ -41,4 +42,5 @@ Creating the initial graph:
 Pruning the graph:
 1. Remove edges that fail to meet the minimum co-occurrence threshold (default: 4)
 2. Remove edges that fail to meet the minimum co-occurrence frequency (default: 10%)
-3. Output pruned graph
+3. Remove orphaned nodes (no edges)
+4. Output pruned graph

@@ -34,12 +34,15 @@
 //  Please provide appropriate attribution in any work or product based on this
 //  material.
 
-use std::io;
-
 use clap::Parser;
 use csv::ReaderBuilder;
+use itertools::Itertools;
 use petgraph::data::Build;
+use petgraph::dot::Dot;
+use petgraph::graphmap::GraphMap;
+use regex::{Captures, Regex};
 use serde::Deserialize;
+use std::io;
 use std::path::PathBuf;
 
 const ALPHA_LENGTH: usize = (b'Z' - b'A') as usize + 1 + 3;
@@ -47,10 +50,11 @@ const AA_DELETE: usize = ALPHA_LENGTH - 3;
 const AA_STOP: usize = ALPHA_LENGTH - 2;
 const AA_ELSE: usize = ALPHA_LENGTH - 1;
 
-fn read_records(amino_acid_sequence: &mut Vec<Vec<u8>>, has_header: bool) {
-    let mut rdr = ReaderBuilder::new()
-        .delimiter(b'\t')
-        .from_reader(io::stdin());
+fn read_records<R>(amino_acid_sequence: &mut Vec<Vec<u8>>, has_header: bool, reader: R)
+where
+    R: std::io::Read,
+{
+    let mut rdr = ReaderBuilder::new().delimiter(b'\t').from_reader(reader);
 
     if has_header {
         let _ = rdr.headers().expect("Input file is missing headers!\n");
@@ -66,15 +70,19 @@ fn read_records(amino_acid_sequence: &mut Vec<Vec<u8>>, has_header: bool) {
 }
 
 #[derive(Deserialize)]
-#[allow(dead_code)]
 struct Record {
+    /*
     cds_id: String,
     accession: String,
     date_first_seen: String,
+
+    // Consider employing strain count for weighting later on
     strain_count: String,
-    country_first_seen: String,
+
+    //country_first_seen: String,
+    */
     aa_aln: String,
-    cds_aln: String,
+    // cds_aln: String,
 }
 
 #[derive(Parser)]
@@ -85,6 +93,9 @@ struct Record {
 )]
 #[clap(long_about = None)]
 struct Cli {
+    #[clap(value_parser, value_name = "QUERY_FILE (or use stdin)")]
+    query_file: Option<PathBuf>,
+
     #[clap(long, short, value_parser, value_name = "Reference File")]
     reference_file: PathBuf,
     #[clap(
@@ -118,15 +129,22 @@ struct Cli {
 fn main() {
     let args = Cli::parse();
 
-    // MT019531 / WUHAN
+    // Process args
     let ref_sequence = std::fs::read_to_string(args.reference_file).expect("Bad reference file");
     let ref_sequence = ref_sequence.as_bytes();
     let minimum_coocurrence_support = args.minimum_coocurrence_support;
     let minimum_cooccrrence_frequency: f32 = args.minimum_cooccrrence_frequency;
     let conservation_threshold: f32 = args.conservation_threshold;
 
+    // Process query file
     let mut sequences: Vec<Vec<u8>> = vec![];
-    read_records(&mut sequences, args.query_has_header);
+    if let Some(path) = args.query_file {
+        let file = std::fs::File::open(path).expect("Cannot open query file.");
+        let reader = std::io::BufReader::new(file);
+        read_records(&mut sequences, args.query_has_header, reader);
+    } else {
+        read_records(&mut sequences, args.query_has_header, io::stdin());
+    }
 
     // Maximum length of sequences, should be uniform but this is required to avoid issues
     let seq_len = sequences
@@ -179,9 +197,6 @@ fn main() {
             }
         }
     }
-
-    use itertools::Itertools;
-    use petgraph::graphmap::GraphMap;
 
     // Add nodes and edges to graph
     let mut aa_mut_net: GraphMap<NodeSub, u32, petgraph::Undirected> = GraphMap::new();
@@ -237,24 +252,20 @@ fn main() {
         }
     }
 
-    // print results
-    use petgraph::dot::Dot;
-    use regex::Regex;
-
+    // print results in Graph DOT format
     // hack output: TO-DO, improve
     let re = Regex::new(r#"--\s*\d+\s*\[\s*label\s*=\s*"(\d+)""#).unwrap();
     let dot = format!("{:?}", Dot::new(&aa_mut_net));
-    let dot = re.replace_all(&dot, "$0, weight=$1");
-    println!("{dot}");
+    //let dot = re.replace_all(&dot, "$0, weight=$1");
 
-    /*
-        let dot = re.replace_all(&dot, |caps: &Captures| {
+    let dot = re.replace_all(&dot, |caps: &Captures| {
         format!(
             "{}, weight={}",
             &caps[0],
             caps[1].parse::<f32>().unwrap_or_default() / number_sequences as f32
         )
-    }); */
+    });
+    println!("{dot}");
 }
 
 #[derive(Copy, Clone, PartialEq, PartialOrd, Ord, Eq, Hash)]

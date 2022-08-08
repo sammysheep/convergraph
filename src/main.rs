@@ -54,7 +54,10 @@ fn read_records<R>(amino_acid_sequence: &mut Vec<Vec<u8>>, has_header: bool, rea
 where
     R: std::io::Read,
 {
-    let mut rdr = ReaderBuilder::new().delimiter(b'\t').from_reader(reader);
+    let mut rdr = ReaderBuilder::new()
+        .delimiter(b'\t')
+        .has_headers(has_header)
+        .from_reader(reader);
 
     if has_header {
         let _ = rdr.headers().expect("Input file is missing headers!\n");
